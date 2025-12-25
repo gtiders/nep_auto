@@ -1,0 +1,174 @@
+# =============================================================================
+# NEP 主动学习配置文件
+# =============================================================================
+# 说明：
+# - 相对路径以 work_dir 为基准解析，绝对路径则直接使用
+# - 任务状态通过检测 DONE 文件判断
+# - 提交任务时会使用 subprocess 切换到对应目录执行
+
+# 全局设置
+global:
+  # 工作目录（绝对路径或相对于配置文件的路径）
+  work_dir: "./work"
+  
+  # 最大迭代次数
+  max_iterations: 100
+  
+  # 每轮最多标注的结构数量
+  # 如果 MaxVol 选中的结构超过此数量，会随机丢弃多余的
+  max_structures_per_iteration: 50
+  
+  # 日志文件（相对于 work_dir）
+  log_file: "active_learning.log"
+  
+  # 初始 NEP 模型文件（必须提供，相对于 work_dir）
+  initial_nep_model: "nep.txt"
+  
+  # 初始训练数据（必须提供，相对于 work_dir）
+  # 注意：必须包含能量、力和应力信息
+  initial_train_data: "train.xyz"
+  
+  # 任务提交命令（在任务目录下执行）
+  submit_command: "qsub job.sh"
+  
+  # 任务状态检查间隔（秒）
+  check_interval: 30
+
+# =============================================================================
+# VASP 配置（DFT 标注）
+# =============================================================================
+vasp:
+  # INCAR 文件路径（相对于 work_dir）
+  incar_file: "input/INCAR"
+  
+  # POTCAR 文件路径（相对于 work_dir）
+  potcar_file: "input/POTCAR"
+  
+  # KPOINTS 文件路径（相对于 work_dir）
+  kpoints_file: "input/KPOINTS"
+  
+  # 作业脚本内容
+  job_script: |
+    #!/bin/bash
+    #PBS -S /bin/bash
+    #PBS -l walltime=1:00:00
+    #PBS -q six_hours
+    #PBS -l nodes=1:ppn=40
+    #PBS -N fc2
+    #PBS -V
+    cd ${PBS_O_WORKDIR}
+
+    #intel
+    source /opt/intel/compilers_and_libraries_2018/linux/bin/compilervars.sh intel64
+    source /opt/intel/mkl/bin/mklvars.sh intel64
+    source /opt/intel/impi/2018.1.163/bin64/mpivars.sh
+
+    mpirun -np 40 /opt/software/vasp/vasp.5.4.4/vasp_std > vasp.log 
+  
+  # 超时时间（秒），超时后任务会被跳过
+  timeout: 172800  # 48 hours
+
+# =============================================================================
+# NEP 配置（模型训练）
+# =============================================================================
+nep:
+  # nep.in 内容（直接写多行字符串）
+  input_content: |
+    type       2 Si O
+    cutoff     6 5
+    n_max      4 4
+    basis_size 8 8
+    l_max      4 2 1
+    neuron     80
+    batch      1000
+    generation 100000
+    population 50
+    lambda_1   0.05
+    lambda_2   0.05
+    lambda_e   1.0
+    lambda_f   1.0
+    lambda_v   0.1
+  
+  # 作业脚本内容
+  job_script: |
+    #!/bin/bash
+    #PBS -N MD
+    #PBS -q gpuQ
+    #PBS -l walltime=30:00:00:00
+    #PBS -l nodes=1:ppn=1
+    #PBS -W x=GRES:gpu@1
+    #PBS -S /bin/bash
+    #PBS -V
+    cd $PBS_O_WORKDIR
+
+    nep > nep.log
+  
+  # 超时时间（秒）
+  timeout: 259200  # 72 hours
+
+# =============================================================================
+# GPUMD 配置（分子动力学探索）
+# =============================================================================
+# 说明：
+# - 每个 condition 的 run_in_content 必须包含 compute_extrapolation 指令
+# - 程序会自动检测，如果缺少该指令则报错
+gpumd:
+  # 多个探索条件（并行运行）
+  conditions:
+    - id: "300K_NVT"
+      # 模拟的初始结构（相对于 work_dir）
+      structure_file: "input/model_300K.xyz"
+      
+      # run.in 内容（必须包含 compute_extrapolation）
+      run_in_content: |
+        potential nep.txt
+        velocity 300
+        ensemble nvt_ber 300 300 100
+        time_step 1
+        compute_extrapolation active_set.asi 100 1000 1.0 10.0
+        run 100000
+    
+    - id: "1000K_NVT"
+      structure_file: "input/model_1000K.xyz"
+      run_in_content: |
+        potential nep.txt
+        velocity 1000
+        ensemble nvt_ber 1000 1000 100
+        time_step 1
+        compute_extrapolation active_set.asi 100 1000 1.0 10.0
+        run 100000
+    
+    - id: "NPT_500K"
+      structure_file: "input/model_npt.xyz"
+      run_in_content: |
+        potential nep.txt
+        velocity 500
+        ensemble npt_scr 500 500 100 0 0 0 1000
+        time_step 1
+        compute_extrapolation active_set.asi 100 1000 1.0 10.0
+        run 100000
+  
+  # 作业脚本内容
+  job_script: |
+    #!/bin/bash
+    #PBS -N MD
+    #PBS -q gpuQ
+    #PBS -l walltime=30:00:00:00
+    #PBS -l nodes=1:ppn=1
+    #PBS -W x=GRES:gpu@1
+    #PBS -S /bin/bash
+    #PBS -V
+    cd $PBS_O_WORKDIR
+
+    gpumd > gpumd.log
+  
+  # 超时时间（秒）
+  timeout: 86400  # 24 hours
+
+# =============================================================================
+# MaxVol 选择配置
+# =============================================================================
+selection:
+  # MaxVol 算法参数
+  gamma_tol: 1.001           # 收敛阈值（算法何时停止迭代）
+  batch_size: 10000          # 批处理大小（大数据集分批处理）

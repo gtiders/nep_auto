@@ -1,0 +1,37 @@
+[project]
+name = "nep-maker"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ase>=3.26.0",
+    "numpy>=2.4.0",
+    "pynep",
+    "pyyaml>=6.0.3",
+    "scipy>=1.11.0",
+    "tqdm>=4.67.1",
+]
+
+[project.scripts]
+nep-auto-init = "nep_auto.initialize:main"
+nep-auto-main = "nep_auto.main:main"
+nep-auto-config = "nep_auto.config:main"
+
+[tool.uv]
+package = true
+
+[[tool.uv.index]]
+url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
+default = true
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["nep_auto*"]
+exclude = ["test*", "nep_maker*"]
+
+[tool.uv.sources]
+pynep = { git = "https://github.com/bigd4/PyNEP.git" }

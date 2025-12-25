@@ -1,0 +1,571 @@
+"""
+主动学习迭代模块
+
+实现主动学习的核心迭代循环，包括：
+1. GPUMD 探索
+2. 结构筛选
+3. VASP DFT 标注
+4. NEP 训练
+5. 活跃集更新
+"""
+
+import shutil
+import subprocess
+import time
+import random
+import logging
+from pathlib import Path
+from typing import List, Optional
+
+from ase import Atoms
+
+from .config import Config
+from .maxvol import (
+    select_active_set,
+    select_extension_structures,
+    read_trajectory,
+    write_trajectory,
+    write_asi_file,
+)
+
+
+class TaskManager:
+    """任务管理器：提交和监控作业"""
+
+    def __init__(self, config: Config, logger: logging.Logger):
+        """
+        初始化任务管理器
+
+        参数:
+            config: 配置对象
+            logger: 日志记录器
+        """
+        self.config = config
+        self.logger = logger
+        self.submit_command = config.global_config.submit_command
+        self.check_interval = config.global_config.check_interval
+
+    def submit_job(self, job_dir: Path) -> bool:
+        """
+        在指定目录提交作业
+
+        参数:
+            job_dir: 作业目录
+
+        返回:
+            是否提交成功
+        """
+        try:
+            # 切换到作业目录并执行提交命令
+            result = subprocess.run(
+                self.submit_command,
+                shell=True,
+                cwd=job_dir,
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode == 0:
+                self.logger.info(f"  作业已提交: {job_dir}")
+                if result.stdout.strip():
+                    self.logger.info(f"    输出: {result.stdout.strip()}")
+                return True
+            else:
+                self.logger.error(f"  作业提交失败: {job_dir}")
+                self.logger.error(f"    错误: {result.stderr}")
+                return False
+
+        except Exception as e:
+            self.logger.error(f"  提交作业时发生异常: {e}")
+            return False
+
+    def wait_for_completion(
+        self, job_dirs: List[Path], timeout: Optional[int] = None
+    ) -> bool:
+        """
+        等待所有作业完成（通过检测 DONE 文件）
+
+        参数:
+            job_dirs: 作业目录列表
+            timeout: 超时时间（秒），None 表示无限等待
+
+        返回:
+            是否所有作业都成功完成
+        """
+        start_time = time.time()
+        pending_jobs = list(job_dirs)
+
+        self.logger.info(f"等待 {len(pending_jobs)} 个作业完成...")
+
+        while pending_jobs:
+            # 检查超时
+            if timeout and (time.time() - start_time) > timeout:
+                self.logger.warning(
+                    f"等待超时（{timeout} 秒），剩余 {len(pending_jobs)} 个作业"
+                )
+                return False
+
+            # 检查每个作业的 DONE 文件
+            completed = []
+            for job_dir in pending_jobs:
+                done_file = job_dir / "DONE"
+                if done_file.exists():
+                    completed.append(job_dir)
+                    self.logger.info(f"  作业完成: {job_dir.name}")
+
+            # 移除已完成的作业
+            for job_dir in completed:
+                pending_jobs.remove(job_dir)
+
+            # 如果还有未完成的作业，等待一段时间后再检查
+            if pending_jobs:
+                time.sleep(self.check_interval)
+
+        self.logger.info("所有作业已完成")
+        return True
+
+
+class IterationManager:
+    """迭代管理器：管理主动学习循环"""
+
+    def __init__(self, config: Config, logger: logging.Logger):
+        """
+        初始化迭代管理器
+
+        参数:
+            config: 配置对象
+            logger: 日志记录器
+        """
+        self.config = config
+        self.logger = logger
+        self.work_dir = config.global_config.work_dir
+        self.task_manager = TaskManager(config, logger)
+
+    def run_gpumd(self, iter_num: int) -> bool:
+        """
+        运行 GPUMD 探索
+
+        参数:
+            iter_num: 当前迭代编号
+
+        返回:
+            是否成功
+        """
+        self.logger.info("=" * 80)
+        self.logger.info(f"步骤 1: GPUMD 探索（迭代 {iter_num}）")
+        self.logger.info("=" * 80)
+
+        iter_dir = self.work_dir / f"iter_{iter_num}"
+        gpumd_dir = iter_dir / "gpumd"
+
+        # 检查是否已经运行过
+        if (iter_dir / "large_gamma.xyz").exists():
+            self.logger.info("GPUMD 探索已完成，跳过此步骤")
+            return True
+
+        # 收集所有条件目录
+        job_dirs = []
+        for cond in self.config.gpumd.conditions:
+            cond_dir = gpumd_dir / cond.id
+            if not cond_dir.exists():
+                self.logger.error(f"条件目录不存在: {cond_dir}")
+                return False
+            job_dirs.append(cond_dir)
+
+        # 提交所有作业
+        self.logger.info(f"提交 {len(job_dirs)} 个 GPUMD 作业...")
+        for job_dir in job_dirs:
+            if not self.task_manager.submit_job(job_dir):
+                return False
+
+        # 等待完成
+        if not self.task_manager.wait_for_completion(
+            job_dirs, timeout=self.config.gpumd.timeout
+        ):
+            return False
+
+        # 合并所有 extrapolation_dump.xyz
+        self.logger.info("\n合并高 Gamma 结构...")
+        large_gamma_file = iter_dir / "large_gamma.xyz"
+
+        all_structures = []
+        for job_dir in job_dirs:
+            dump_file = job_dir / "extrapolation_dump.xyz"
+            if dump_file.exists():
+                try:
+                    structures = read_trajectory(str(dump_file))
+                    all_structures.extend(structures)
+                    self.logger.info(f"  {job_dir.name}: {len(structures)} 个结构")
+                except Exception as e:
+                    self.logger.warning(f"  读取 {dump_file} 失败: {e}")
+
+        # 保存合并结果
+        if all_structures:
+            write_trajectory(all_structures, str(large_gamma_file))
+            self.logger.info(f"总共收集到 {len(all_structures)} 个高 Gamma 结构")
+            self.logger.info(f"保存到: {large_gamma_file}")
+        else:
+            # 创建空文件
+            large_gamma_file.touch()
+            self.logger.info("未收集到高 Gamma 结构（训练可能已收敛）")
+
+        return True
+
+    def select_structures(self, iter_num: int) -> List[Atoms]:
+        """
+        选择待标注的新结构
+
+        参数:
+            iter_num: 当前迭代编号
+
+        返回:
+            选中的结构列表
+        """
+        self.logger.info("=" * 80)
+        self.logger.info(f"步骤 2: 结构筛选（迭代 {iter_num}）")
+        self.logger.info("=" * 80)
+
+        iter_dir = self.work_dir / f"iter_{iter_num}"
+        train_file = iter_dir / "train.xyz"
+        large_gamma_file = iter_dir / "large_gamma.xyz"
+        nep_file = iter_dir / "nep.txt"
+
+        # 检查输入文件
+        if not large_gamma_file.exists():
+            self.logger.error(f"large_gamma.xyz 不存在: {large_gamma_file}")
+            return []
+
+        # 检查是否为空
+        if large_gamma_file.stat().st_size == 0:
+            self.logger.info("large_gamma.xyz 为空，没有新结构需要标注")
+            return []
+
+        # 读取文件
+        train_structures = read_trajectory(str(train_file))
+        candidate_structures = read_trajectory(str(large_gamma_file))
+
+        self.logger.info(f"训练集结构数: {len(train_structures)}")
+        self.logger.info(f"候选结构数: {len(candidate_structures)}")
+
+        # 执行 MaxVol 选择
+        self.logger.info("\n执行 MaxVol 选择...")
+        selected = select_extension_structures(
+            train_trajectory=train_structures,
+            candidate_trajectory=candidate_structures,
+            nep_file=str(nep_file),
+            gamma_tol=self.config.selection.gamma_tol,
+            batch_size=self.config.selection.batch_size,
+        )
+
+        self.logger.info(f"MaxVol 选中 {len(selected)} 个结构")
+
+        # 限制数量
+        max_structures = self.config.global_config.max_structures_per_iteration
+        if len(selected) > max_structures:
+            self.logger.info(f"限制为 {max_structures} 个结构（随机选择）")
+            random.seed(42)  # 保证可重复性
+            random.shuffle(selected)
+            selected = selected[:max_structures]
+
+        return selected
+
+    def run_vasp(self, iter_num: int, structures: List[Atoms]) -> bool:
+        """
+        运行 VASP DFT 计算
+
+        参数:
+            iter_num: 当前迭代编号
+            structures: 待计算的结构列表
+
+        返回:
+            是否成功
+        """
+        if not structures:
+            self.logger.info("没有需要 DFT 标注的结构，跳过 VASP 步骤")
+            return True
+
+        self.logger.info("=" * 80)
+        self.logger.info(f"步骤 3: VASP DFT 标注（迭代 {iter_num}）")
+        self.logger.info("=" * 80)
+
+        iter_dir = self.work_dir / f"iter_{iter_num}"
+        vasp_dir = iter_dir / "vasp"
+        vasp_dir.mkdir(parents=True, exist_ok=True)
+
+        # 为每个结构创建计算目录
+        job_dirs = []
+        for i, structure in enumerate(structures):
+            task_dir = vasp_dir / f"task_{i:04d}"
+            task_dir.mkdir(parents=True, exist_ok=True)
+
+            # 写入 POSCAR
+            from ase.io import write as ase_write
+
+            ase_write(str(task_dir / "POSCAR"), structure, format="vasp")
+
+            # 复制输入文件
+            shutil.copy2(self.config.vasp.incar_file, task_dir / "INCAR")
+            shutil.copy2(self.config.vasp.potcar_file, task_dir / "POTCAR")
+            shutil.copy2(self.config.vasp.kpoints_file, task_dir / "KPOINTS")
+
+            # 写入作业脚本
+            with open(task_dir / "job.sh", "w") as f:
+                f.write(self.config.vasp.job_script)
+
+            job_dirs.append(task_dir)
+
+        self.logger.info(f"创建了 {len(job_dirs)} 个 VASP 计算任务")
+
+        # 提交所有作业
+        self.logger.info("\n提交 VASP 作业...")
+        for job_dir in job_dirs:
+            if not self.task_manager.submit_job(job_dir):
+                return False
+
+        # 等待完成
+        if not self.task_manager.wait_for_completion(
+            job_dirs, timeout=self.config.vasp.timeout
+        ):
+            return False
+
+        # 收集结果并追加到训练集
+        self.logger.info("\n收集 DFT 计算结果...")
+        train_file = iter_dir / "train.xyz"
+        new_structures = []
+
+        for job_dir in job_dirs:
+            outcar_file = job_dir / "OUTCAR"
+            if outcar_file.exists():
+                try:
+                    from ase.io import read as ase_read
+
+                    structure = ase_read(str(outcar_file), format="vasp-out")
+                    new_structures.append(structure)
+                except Exception as e:
+                    self.logger.warning(f"  读取 {outcar_file} 失败: {e}")
+
+        if new_structures:
+            # 追加到训练集
+            existing = read_trajectory(str(train_file))
+            all_structures = existing + new_structures
+            write_trajectory(all_structures, str(train_file))
+            self.logger.info(f"成功标注 {len(new_structures)} 个结构")
+            self.logger.info(f"训练集更新为 {len(all_structures)} 个结构")
+            return True
+        else:
+            self.logger.error("未成功收集到任何 DFT 结果")
+            return False
+
+    def run_nep(self, iter_num: int) -> bool:
+        """
+        运行 NEP 训练
+
+        参数:
+            iter_num: 当前迭代编号
+
+        返回:
+            是否成功
+        """
+        self.logger.info("=" * 80)
+        self.logger.info(f"步骤 4: NEP 训练（迭代 {iter_num}）")
+        self.logger.info("=" * 80)
+
+        iter_dir = self.work_dir / f"iter_{iter_num}"
+        nep_dir = iter_dir / "nep_train"
+        nep_dir.mkdir(parents=True, exist_ok=True)
+
+        # 复制训练数据
+        train_file = iter_dir / "train.xyz"
+        shutil.copy2(train_file, nep_dir / "train.xyz")
+
+        # 写入 nep.in
+        with open(nep_dir / "nep.in", "w") as f:
+            f.write(self.config.nep.input_content)
+
+        # 写入作业脚本
+        with open(nep_dir / "job.sh", "w") as f:
+            f.write(self.config.nep.job_script)
+
+        self.logger.info(f"NEP 训练目录: {nep_dir}")
+
+        # 提交作业
+        if not self.task_manager.submit_job(nep_dir):
+            return False
+
+        # 等待完成
+        if not self.task_manager.wait_for_completion(
+            [nep_dir], timeout=self.config.nep.timeout
+        ):
+            return False
+
+        # 复制 nep.txt 到迭代目录
+        nep_txt = nep_dir / "nep.txt"
+        if nep_txt.exists():
+            shutil.copy2(nep_txt, iter_dir / "nep.txt")
+            self.logger.info("NEP 训练完成")
+            return True
+        else:
+            self.logger.error("NEP 训练失败：未生成 nep.txt")
+            return False
+
+    def update_active_set(self, iter_num: int) -> bool:
+        """
+        更新活跃集
+
+        参数:
+            iter_num: 当前迭代编号
+
+        返回:
+            是否成功
+        """
+        self.logger.info("=" * 80)
+        self.logger.info(f"步骤 5: 更新活跃集（迭代 {iter_num}）")
+        self.logger.info("=" * 80)
+
+        iter_dir = self.work_dir / f"iter_{iter_num}"
+        train_file = iter_dir / "train.xyz"
+        nep_file = iter_dir / "nep.txt"
+
+        # 读取训练集
+        train_structures = read_trajectory(str(train_file))
+        self.logger.info(f"训练集包含 {len(train_structures)} 个结构")
+
+        # 生成活跃集
+        try:
+            active_set_result, selected_structures = select_active_set(
+                train_trajectory=train_structures,
+                nep_file=str(nep_file),
+                gamma_tol=self.config.selection.gamma_tol,
+                batch_size=self.config.selection.batch_size,
+            )
+
+            # 统计
+            total_envs = sum(
+                len(inv) for inv in active_set_result.inverse_dict.values()
+            )
+            self.logger.info(f"活跃环境总数: {total_envs}")
+            for element, inv_matrix in active_set_result.inverse_dict.items():
+                self.logger.info(f"  元素 {element}: {len(inv_matrix)} 个活跃环境")
+
+            # 保存活跃集
+            asi_file = iter_dir / "active_set.asi"
+            write_asi_file(active_set_result.inverse_dict, str(asi_file))
+            self.logger.info(f"保存活跃集文件: {asi_file}")
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"活跃集生成失败: {e}")
+            return False
+
+    def prepare_next_gpumd(self, iter_num: int) -> bool:
+        """
+        准备下一轮 GPUMD 探索
+
+        参数:
+            iter_num: 当前迭代编号
+
+        返回:
+            是否成功
+        """
+        self.logger.info("=" * 80)
+        self.logger.info(f"步骤 6: 准备下一轮 GPUMD 探索（迭代 {iter_num + 1}）")
+        self.logger.info("=" * 80)
+
+        curr_iter_dir = self.work_dir / f"iter_{iter_num}"
+        next_iter_dir = self.work_dir / f"iter_{iter_num + 1}"
+        next_iter_dir.mkdir(parents=True, exist_ok=True)
+
+        # 复制文件到下一轮
+        shutil.copy2(curr_iter_dir / "train.xyz", next_iter_dir / "train.xyz")
+        shutil.copy2(curr_iter_dir / "nep.txt", next_iter_dir / "nep.txt")
+        shutil.copy2(curr_iter_dir / "active_set.asi", next_iter_dir / "active_set.asi")
+
+        # 创建 GPUMD 目录
+        next_gpumd_dir = next_iter_dir / "gpumd"
+        next_gpumd_dir.mkdir(parents=True, exist_ok=True)
+
+        # 为每个条件创建目录
+        for cond in self.config.gpumd.conditions:
+            cond_dir = next_gpumd_dir / cond.id
+            cond_dir.mkdir(parents=True, exist_ok=True)
+
+            # 复制结构文件
+            structure_dst = cond_dir / "model.xyz"
+            shutil.copy2(cond.structure_file, structure_dst)
+
+            # 复制 NEP 和活跃集
+            shutil.copy2(next_iter_dir / "nep.txt", cond_dir / "nep.txt")
+            shutil.copy2(next_iter_dir / "active_set.asi", cond_dir / "active_set.asi")
+
+            # 写入 run.in
+            with open(cond_dir / "run.in", "w") as f:
+                f.write(cond.run_in_content)
+
+            # 写入作业脚本
+            with open(cond_dir / "job.sh", "w") as f:
+                f.write(self.config.gpumd.job_script)
+
+        self.logger.info(f"准备完成: {next_gpumd_dir}")
+        return True
+
+    def run_iteration(self, iter_num: int) -> bool:
+        """
+        运行一次完整迭代
+
+        参数:
+            iter_num: 迭代编号
+
+        返回:
+            是否继续（True=继续，False=收敛或失败）
+        """
+        self.logger.info("\n" + "=" * 80)
+        self.logger.info(f"开始迭代 {iter_num}")
+        self.logger.info("=" * 80)
+
+        # 步骤 1: GPUMD 探索
+        if not self.run_gpumd(iter_num):
+            self.logger.error("GPUMD 探索失败")
+            return False
+
+        # 步骤 2: 结构筛选
+        selected = self.select_structures(iter_num)
+
+        # 检查是否收敛
+        if len(selected) == 0:
+            self.logger.info("\n" + "=" * 80)
+            self.logger.info("未选中新结构 - 训练已收敛！")
+            self.logger.info("=" * 80)
+            return False
+
+        # 保存待标注结构
+        iter_dir = self.work_dir / f"iter_{iter_num}"
+        to_add_file = iter_dir / "to_add.xyz"
+        write_trajectory(selected, str(to_add_file))
+        self.logger.info(f"保存待标注结构: {to_add_file}")
+
+        # 步骤 3: VASP DFT 标注
+        if not self.run_vasp(iter_num, selected):
+            self.logger.error("VASP 标注失败")
+            return False
+
+        # 步骤 4: NEP 训练
+        if not self.run_nep(iter_num):
+            self.logger.error("NEP 训练失败")
+            return False
+
+        # 步骤 5: 更新活跃集
+        if not self.update_active_set(iter_num):
+            self.logger.error("活跃集更新失败")
+            return False
+
+        # 步骤 6: 准备下一轮
+        if not self.prepare_next_gpumd(iter_num):
+            self.logger.error("准备下一轮失败")
+            return False
+
+        self.logger.info("\n" + "=" * 80)
+        self.logger.info(f"迭代 {iter_num} 完成")
+        self.logger.info("=" * 80)
+
+        return True

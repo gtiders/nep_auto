@@ -1,0 +1,234 @@
+"""
+初始化脚本
+
+这是独立于普通迭代的第一步，负责：
+1. 复制初始 NEP 模型和训练数据到工作目录
+2. 生成第一个活跃集（active_set.asi）
+3. 准备 GPUMD 探索任务
+"""
+
+import shutil
+import logging
+from pathlib import Path
+
+from .config import Config, load_config
+from .maxvol import select_active_set, read_trajectory, write_trajectory, write_asi_file
+
+
+def setup_logger(log_file: Path) -> logging.Logger:
+    """
+    设置日志记录器
+
+    参数:
+        log_file: 日志文件路径
+
+    返回:
+        配置好的 logger
+    """
+    logger = logging.getLogger("nep_auto")
+    logger.setLevel(logging.INFO)
+
+    # 文件处理器
+    fh = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+    fh.setLevel(logging.INFO)
+
+    # 控制台处理器
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+
+    # 格式化
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+
+    return logger
+
+
+def initialize_workspace(config: Config, logger: logging.Logger) -> None:
+    """
+    初始化工作空间
+
+    第 0 步 (Iteration 0)：
+    1. 复制初始 nep.txt 和 train.xyz 到工作目录
+    2. 使用 select_active_set() 生成活跃集
+    3. 创建 GPUMD 探索任务目录
+
+    参数:
+        config: 配置对象
+        logger: 日志记录器
+    """
+    work_dir = config.global_config.work_dir
+
+    logger.info("=" * 80)
+    logger.info("开始初始化工作空间（Iteration 0）")
+    logger.info("=" * 80)
+
+    # =========================================================================
+    # 步骤 1: 创建工作目录结构
+    # =========================================================================
+    logger.info("\n步骤 1: 创建工作目录结构")
+
+    # 创建迭代 0 目录
+    iter0_dir = work_dir / "iter_0"
+    iter0_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"  创建目录: {iter0_dir}")
+
+    # =========================================================================
+    # 步骤 2: 复制初始文件
+    # =========================================================================
+    logger.info("\n步骤 2: 复制初始文件")
+
+    # 复制 nep.txt
+    nep_dst = iter0_dir / "nep.txt"
+    shutil.copy2(config.global_config.initial_nep_model, nep_dst)
+    logger.info(
+        f"  复制 NEP 模型: {config.global_config.initial_nep_model} -> {nep_dst}"
+    )
+
+    # 复制 train.xyz
+    train_dst = iter0_dir / "train.xyz"
+    shutil.copy2(config.global_config.initial_train_data, train_dst)
+    logger.info(
+        f"  复制训练数据: {config.global_config.initial_train_data} -> {train_dst}"
+    )
+
+    # 统计训练数据
+    train_structures = read_trajectory(str(train_dst))
+    logger.info(f"  训练集包含 {len(train_structures)} 个结构")
+
+    # =========================================================================
+    # 步骤 3: 生成活跃集
+    # =========================================================================
+    logger.info("\n步骤 3: 生成活跃集（MaxVol 选择）")
+
+    try:
+        active_set_result, selected_structures = select_active_set(
+            trajectory=train_structures,
+            nep_file=str(nep_dst),
+            gamma_tol=config.selection.gamma_tol,
+            batch_size=config.selection.batch_size,
+        )
+
+        logger.info("  活跃集生成成功")
+        logger.info(f"  选中的结构数量: {len(selected_structures)}")
+
+        # 统计每个元素的活跃环境数量
+        total_envs = sum(len(inv) for inv in active_set_result.inverse_dict.values())
+        logger.info(f"  活跃环境总数: {total_envs}")
+
+        for element, inv_matrix in active_set_result.inverse_dict.items():
+            logger.info(f"    元素 {element}: {len(inv_matrix)} 个活跃环境")
+
+        # 保存活跃集文件
+        asi_file = iter0_dir / "active_set.asi"
+        write_asi_file(active_set_result.inverse_dict, str(asi_file))
+        logger.info(f"  保存活跃集文件: {asi_file}")
+
+        # 保存活跃集结构（可选，用于分析）
+        active_xyz = iter0_dir / "active_set.xyz"
+        write_trajectory(selected_structures, str(active_xyz))
+        logger.info(f"  保存活跃集结构: {active_xyz}")
+
+    except Exception as e:
+        logger.error(f"  活跃集生成失败: {e}")
+        raise
+
+    # =========================================================================
+    # 步骤 4: 准备 GPUMD 探索任务
+    # =========================================================================
+    logger.info("\n步骤 4: 准备 GPUMD 探索任务")
+
+    # 创建 GPUMD 总目录
+    gpumd_dir = iter0_dir / "gpumd"
+    gpumd_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"  创建 GPUMD 目录: {gpumd_dir}")
+
+    # 为每个探索条件创建子目录
+    for cond in config.gpumd.conditions:
+        cond_dir = gpumd_dir / cond.id
+        cond_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"  创建探索条件: {cond.id}")
+
+        # 复制结构文件
+        structure_dst = cond_dir / "model.xyz"
+        shutil.copy2(cond.structure_file, structure_dst)
+        logger.info(f"    复制结构文件: {cond.structure_file.name}")
+
+        # 复制 NEP 模型
+        nep_gpumd = cond_dir / "nep.txt"
+        shutil.copy2(nep_dst, nep_gpumd)
+        logger.info("    复制 NEP 模型")
+
+        # 复制活跃集
+        asi_gpumd = cond_dir / "active_set.asi"
+        shutil.copy2(asi_file, asi_gpumd)
+        logger.info("    复制活跃集文件")
+
+        # 写入 run.in
+        run_in_file = cond_dir / "run.in"
+        with open(run_in_file, "w") as f:
+            f.write(cond.run_in_content)
+        logger.info("    创建 run.in")
+
+        # 写入作业脚本
+        job_script_file = cond_dir / "job.sh"
+        with open(job_script_file, "w") as f:
+            f.write(config.gpumd.job_script)
+        logger.info("    创建作业脚本")
+
+    # =========================================================================
+    # 步骤 5: 创建状态文件
+    # =========================================================================
+    logger.info("\n步骤 5: 创建状态文件")
+
+    # 创建 DONE 文件标记初始化完成
+    done_file = iter0_dir / "DONE"
+    done_file.touch()
+    logger.info(f"  创建 DONE 文件: {done_file}")
+
+    logger.info("\n" + "=" * 80)
+    logger.info("初始化完成！")
+    logger.info("=" * 80)
+    logger.info("\n下一步: 提交 GPUMD 探索任务")
+    logger.info(f"  任务目录: {gpumd_dir}")
+    logger.info(
+        f"  提交命令: cd <condition_dir> && {config.global_config.submit_command}"
+    )
+
+
+def main():
+    """
+    主函数：执行初始化流程
+    """
+    import sys
+
+    if len(sys.argv) < 2:
+        print("用法: nep-auto-init <config_file.yaml>")
+        print("\n示例:")
+        print("  nep-auto-init config.yaml")
+        sys.exit(1)
+
+    config_file = sys.argv[1]
+
+    # 加载配置
+    print("加载配置文件...")
+    config = load_config(config_file)
+
+    # 设置日志
+    logger = setup_logger(config.global_config.log_file)
+
+    # 执行初始化
+    try:
+        initialize_workspace(config, logger)
+    except Exception as e:
+        logger.error(f"初始化失败: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    main()
