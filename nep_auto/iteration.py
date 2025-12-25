@@ -233,7 +233,7 @@ class IterationManager:
                 try:
                     train_structures = read_trajectory(str(iter_dir / "train.xyz"))
                     active_set_result, _ = select_active_set(
-                        train_trajectory=train_structures,
+                        trajectory=train_structures,
                         nep_file=str(iter_dir / "nep.txt"),
                         gamma_tol=self.config.selection.gamma_tol,
                         batch_size=self.config.selection.batch_size,
@@ -551,7 +551,7 @@ class IterationManager:
         # 生成活跃集
         try:
             active_set_result, selected_structures = select_active_set(
-                train_trajectory=train_structures,
+                trajectory=train_structures,
                 nep_file=str(nep_file),
                 gamma_tol=self.config.selection.gamma_tol,
                 batch_size=self.config.selection.batch_size,
