@@ -29,6 +29,25 @@ from .maxvol import (
 )
 
 
+def _ensure_done_marker(job_script: str) -> str:
+    """
+    确保作业脚本末尾有 touch DONE 命令
+
+    参数:
+        job_script: 原始作业脚本内容
+
+    返回:
+        添加了 DONE 标记的脚本
+    """
+    script = job_script.rstrip()
+
+    # 检查是否已经有 touch DONE
+    if "touch DONE" not in script and "touch ./DONE" not in script:
+        script += "\n\n# 自动添加：标记任务完成\ntouch DONE\n"
+
+    return script
+
+
 class TaskManager:
     """任务管理器：提交和监控作业"""
 
@@ -168,17 +187,15 @@ class IterationManager:
             self.logger.info("GPUMD 目录不存在，准备创建...")
 
             # 检查上一轮是否存在
-            if iter_num > 0:
+            if iter_num > 1:
+                # iter_2+ 从上一轮复制
                 prev_iter_dir = self.work_dir / f"iter_{iter_num - 1}"
                 if not prev_iter_dir.exists():
                     self.logger.error(f"上一轮目录不存在: {prev_iter_dir}")
-                    self.logger.error("请确保从 iter_0 开始或使用 --start-iter 0")
+                    self.logger.error("请确保从 iter_1 开始或使用 --start-iter 1")
                     return False
 
                 # 复制必要文件
-                gpumd_dir.mkdir(parents=True, exist_ok=True)
-
-                # 复制 nep.txt 和 active_set.asi
                 for filename in ["nep.txt", "active_set.asi", "train.xyz"]:
                     src = prev_iter_dir / filename
                     if src.exists():
@@ -188,34 +205,81 @@ class IterationManager:
                         self.logger.error(f"  文件不存在: {src}")
                         return False
 
-                # 为每个条件创建目录
-                for cond in self.config.gpumd.conditions:
-                    cond_dir = gpumd_dir / cond.id
-                    cond_dir.mkdir(parents=True, exist_ok=True)
-                    self.logger.info(f"  创建条件目录: {cond.id}")
+            elif iter_num == 1:
+                # iter_1 从用户提供的初始文件获取
+                self.logger.info("这是第一轮迭代，从配置文件获取初始文件...")
+                iter_dir.mkdir(parents=True, exist_ok=True)
 
-                    # 复制结构文件
-                    structure_dst = cond_dir / "model.xyz"
-                    shutil.copy2(cond.structure_file, structure_dst)
+                # 复制初始 nep.txt
+                nep_src = Path(self.config.global_config.initial_nep_model)
+                if nep_src.exists():
+                    shutil.copy2(nep_src, iter_dir / "nep.txt")
+                    self.logger.info(f"  复制初始 NEP 模型: {nep_src.name}")
+                else:
+                    self.logger.error(f"  初始 NEP 模型不存在: {nep_src}")
+                    return False
 
-                    # 复制 NEP 和活跃集
-                    shutil.copy2(iter_dir / "nep.txt", cond_dir / "nep.txt")
-                    shutil.copy2(
-                        iter_dir / "active_set.asi", cond_dir / "active_set.asi"
+                # 复制初始 train.xyz
+                train_src = Path(self.config.global_config.initial_train_data)
+                if train_src.exists():
+                    shutil.copy2(train_src, iter_dir / "train.xyz")
+                    self.logger.info(f"  复制初始训练数据: {train_src.name}")
+                else:
+                    self.logger.error(f"  初始训练数据不存在: {train_src}")
+                    return False
+
+                # 生成活跃集
+                self.logger.info("  从初始数据生成活跃集...")
+                try:
+                    train_structures = read_trajectory(str(iter_dir / "train.xyz"))
+                    active_set_result, _ = select_active_set(
+                        train_trajectory=train_structures,
+                        nep_file=str(iter_dir / "nep.txt"),
+                        gamma_tol=self.config.selection.gamma_tol,
+                        batch_size=self.config.selection.batch_size,
                     )
+                    write_asi_file(
+                        active_set_result.inverse_dict,
+                        str(iter_dir / "active_set.asi"),
+                    )
+                    total = sum(
+                        len(inv) for inv in active_set_result.inverse_dict.values()
+                    )
+                    self.logger.info(f"  活跃集包含 {total} 个环境")
+                except Exception as e:
+                    self.logger.error(f"  生成活跃集失败: {e}")
+                    return False
 
-                    # 写入 run.in
-                    with open(cond_dir / "run.in", "w") as f:
-                        f.write(cond.run_in_content)
-
-                    # 写入作业脚本
-                    with open(cond_dir / "job.sh", "w") as f:
-                        f.write(self.config.gpumd.job_script)
-
-                self.logger.info("GPUMD 目录准备完成")
             else:
-                self.logger.error("iter_0 的 GPUMD 目录应该由初始化创建")
+                self.logger.error("iter_num 必须 >= 1")
                 return False
+
+            # 创建 GPUMD 目录结构
+            gpumd_dir.mkdir(parents=True, exist_ok=True)
+
+            # 为每个条件创建目录
+            for cond in self.config.gpumd.conditions:
+                cond_dir = gpumd_dir / cond.id
+                cond_dir.mkdir(parents=True, exist_ok=True)
+                self.logger.info(f"  创建条件目录: {cond.id}")
+
+                # 复制结构文件
+                structure_dst = cond_dir / "model.xyz"
+                shutil.copy2(cond.structure_file, structure_dst)
+
+                # 复制 NEP 和活跃集
+                shutil.copy2(iter_dir / "nep.txt", cond_dir / "nep.txt")
+                shutil.copy2(iter_dir / "active_set.asi", cond_dir / "active_set.asi")
+
+                # 写入 run.in
+                with open(cond_dir / "run.in", "w") as f:
+                    f.write(cond.run_in_content)
+
+                # 写入作业脚本（自动添加 DONE 标记）
+                with open(cond_dir / "job.sh", "w") as f:
+                    f.write(_ensure_done_marker(self.config.gpumd.job_script))
+
+            self.logger.info("GPUMD 目录准备完成")
 
         # 收集所有条件目录
         job_dirs = []
@@ -362,9 +426,9 @@ class IterationManager:
             shutil.copy2(self.config.vasp.potcar_file, task_dir / "POTCAR")
             shutil.copy2(self.config.vasp.kpoints_file, task_dir / "KPOINTS")
 
-            # 写入作业脚本
+            # 写入作业脚本（自动添加 DONE 标记）
             with open(task_dir / "job.sh", "w") as f:
-                f.write(self.config.vasp.job_script)
+                f.write(_ensure_done_marker(self.config.vasp.job_script))
 
             job_dirs.append(task_dir)
 
@@ -436,9 +500,9 @@ class IterationManager:
         with open(nep_dir / "nep.in", "w") as f:
             f.write(self.config.nep.input_content)
 
-        # 写入作业脚本
+        # 写入作业脚本（自动添加 DONE 标记）
         with open(nep_dir / "job.sh", "w") as f:
-            f.write(self.config.nep.job_script)
+            f.write(_ensure_done_marker(self.config.nep.job_script))
 
         self.logger.info(f"NEP 训练目录: {nep_dir}")
 
@@ -556,9 +620,9 @@ class IterationManager:
             with open(cond_dir / "run.in", "w") as f:
                 f.write(cond.run_in_content)
 
-            # 写入作业脚本
+            # 写入作业脚本（自动添加 DONE 标记）
             with open(cond_dir / "job.sh", "w") as f:
-                f.write(self.config.gpumd.job_script)
+                f.write(_ensure_done_marker(self.config.gpumd.job_script))
 
         self.logger.info(f"准备完成: {next_gpumd_dir}")
         return True

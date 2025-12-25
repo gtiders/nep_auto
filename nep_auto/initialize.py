@@ -1,9 +1,9 @@
 """
 初始化脚本
 
-这是独立于普通迭代的第一步，负责：
-1. 复制初始 NEP 模型和训练数据到工作目录
-2. 生成第一个活跃集（active_set.asi）
+准备第一轮迭代(iter_1)：
+1. 从用户提供的初始文件创建 iter_1 目录
+2. 生成活跃集（active_set.asi）
 3. 准备 GPUMD 探索任务
 """
 
@@ -13,6 +13,25 @@ from pathlib import Path
 
 from .config import Config, load_config
 from .maxvol import select_active_set, read_trajectory, write_trajectory, write_asi_file
+
+
+def _ensure_done_marker(job_script: str) -> str:
+    """
+    确保作业脚本末尾有 touch DONE 命令
+
+    参数:
+        job_script: 原始作业脚本内容
+
+    返回:
+        添加了 DONE 标记的脚本
+    """
+    script = job_script.rstrip()
+
+    # 检查是否已经有 touch DONE
+    if "touch DONE" not in script and "touch ./DONE" not in script:
+        script += "\n\n# 自动添加：标记任务完成\ntouch DONE\n"
+
+    return script
 
 
 def setup_logger(log_file: Path) -> logging.Logger:
@@ -53,7 +72,7 @@ def initialize_workspace(config: Config, logger: logging.Logger) -> None:
     """
     初始化工作空间
 
-    第 0 步 (Iteration 0)：
+    第 0 步 (Iteration 1)：
     1. 复制初始 nep.txt 和 train.xyz 到工作目录
     2. 使用 select_active_set() 生成活跃集
     3. 创建 GPUMD 探索任务目录
@@ -65,7 +84,7 @@ def initialize_workspace(config: Config, logger: logging.Logger) -> None:
     work_dir = config.global_config.work_dir
 
     logger.info("=" * 80)
-    logger.info("开始初始化工作空间（Iteration 0）")
+    logger.info("开始初始化工作空间（Iteration 1）")
     logger.info("=" * 80)
 
     # =========================================================================
@@ -73,8 +92,8 @@ def initialize_workspace(config: Config, logger: logging.Logger) -> None:
     # =========================================================================
     logger.info("\n步骤 1: 创建工作目录结构")
 
-    # 创建迭代 0 目录
-    iter0_dir = work_dir / "iter_0"
+    # 创建迭代 1 目录
+    iter0_dir = work_dir / "iter_1"
     iter0_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"  创建目录: {iter0_dir}")
 
@@ -175,11 +194,11 @@ def initialize_workspace(config: Config, logger: logging.Logger) -> None:
             f.write(cond.run_in_content)
         logger.info("    创建 run.in")
 
-        # 写入作业脚本
+        # 写入作业脚本（自动添加 DONE 标记）
         job_script_file = cond_dir / "job.sh"
         with open(job_script_file, "w") as f:
-            f.write(config.gpumd.job_script)
-        logger.info("    创建作业脚本")
+            f.write(_ensure_done_marker(config.gpumd.job_script))
+        logger.info("    创建作业脚本（已自动添加 DONE 标记）")
 
     # =========================================================================
     # 步骤 5: 创建状态文件

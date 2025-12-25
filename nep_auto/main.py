@@ -2,7 +2,7 @@
 主程序入口
 
 完整的主动学习流程：
-1. 初始化工作空间（迭代 0）
+1. 初始化工作空间（迭代 1）- 使用用户提供的初始文件
 2. 运行迭代循环（迭代 1, 2, 3, ...）
 3. 直到收敛或达到最大迭代次数
 """
@@ -36,7 +36,12 @@ def main() -> None:
         """,
     )
     parser.add_argument("config", type=str, help="配置文件路径")
-    parser.add_argument("--start-iter", type=int, default=0, help="起始迭代编号")
+    parser.add_argument(
+        "--start-iter",
+        type=int,
+        default=1,
+        help="起始迭代编号 (默认从 iter_1 开始)",
+    )
     args = parser.parse_args()
 
     config_file = args.config
@@ -63,10 +68,13 @@ def main() -> None:
     # 设置日志
     logger = setup_logger(config.global_config.log_file)
 
-    # 步骤 0: 初始化（如果从头开始）
-    if start_iter == 0:
+    # 初始化逻辑：如果 iter_1 不存在，自动初始化
+    work_dir = Path(config.global_config.work_dir)
+    iter_1_dir = work_dir / "iter_1"
+
+    if start_iter == 1 and not iter_1_dir.exists():
         logger.info("=" * 80)
-        logger.info("开始主动学习流程")
+        logger.info("检测到 iter_1 不存在，开始初始化工作空间")
         logger.info("=" * 80)
 
         try:
@@ -75,8 +83,9 @@ def main() -> None:
             logger.error(f"初始化失败: {e}")
             sys.exit(1)
 
-        # 初始化完成，开始迭代
-        start_iter = 1
+    logger.info("=" * 80)
+    logger.info("开始主动学习流程")
+    logger.info("=" * 80)
 
     # 创建迭代管理器
     iteration_manager = IterationManager(config, logger)
