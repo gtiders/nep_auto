@@ -1,0 +1,6 @@
+ase>=3.26.0
+numpy>=2.4.0
+pynep
+pyyaml>=6.0.3
+scipy>=1.11.0
+tqdm>=4.67.1

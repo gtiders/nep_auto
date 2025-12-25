@@ -1,1 +1,0 @@
-bsub < job.sh

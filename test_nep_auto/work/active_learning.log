@@ -1,0 +1,30 @@
+2025-12-25 15:39:51,547 - nep_auto - INFO - ================================================================================
+2025-12-25 15:39:51,547 - nep_auto - INFO - 开始初始化工作空间（Iteration 0）
+2025-12-25 15:39:51,547 - nep_auto - INFO - ================================================================================
+2025-12-25 15:39:51,547 - nep_auto - INFO - 
+步骤 1: 创建工作目录结构
+2025-12-25 15:39:51,547 - nep_auto - INFO -   创建目录: /home/gwins/code_space/nep_maker/test_nep_auto/work/iter_0
+2025-12-25 15:39:51,548 - nep_auto - INFO - 
+步骤 2: 复制初始文件
+2025-12-25 15:39:51,548 - nep_auto - INFO -   复制 NEP 模型: /home/gwins/code_space/nep_maker/test_nep_auto/work/../input/nep.txt -> /home/gwins/code_space/nep_maker/test_nep_auto/work/iter_0/nep.txt
+2025-12-25 15:39:51,550 - nep_auto - INFO -   复制训练数据: /home/gwins/code_space/nep_maker/test_nep_auto/work/../input/train.xyz -> /home/gwins/code_space/nep_maker/test_nep_auto/work/iter_0/train.xyz
+2025-12-25 15:39:51,627 - nep_auto - INFO -   训练集包含 200 个结构
+2025-12-25 15:39:51,627 - nep_auto - INFO - 
+步骤 3: 生成活跃集（MaxVol 选择）
+2025-12-25 15:39:51,627 - nep_auto - ERROR -   活跃集生成失败: select_active_set() got an unexpected keyword argument 'train_trajectory'
+2025-12-25 15:39:51,627 - nep_auto - ERROR - 初始化失败: select_active_set() got an unexpected keyword argument 'train_trajectory'
+2025-12-25 15:40:47,255 - nep_auto - INFO - ================================================================================
+2025-12-25 15:40:47,255 - nep_auto - INFO - 开始初始化工作空间（Iteration 0）
+2025-12-25 15:40:47,256 - nep_auto - INFO - ================================================================================
+2025-12-25 15:40:47,256 - nep_auto - INFO - 
+步骤 1: 创建工作目录结构
+2025-12-25 15:40:47,256 - nep_auto - INFO -   创建目录: /home/gwins/code_space/nep_maker/test_nep_auto/work/iter_0
+2025-12-25 15:40:47,256 - nep_auto - INFO - 
+步骤 2: 复制初始文件
+2025-12-25 15:40:47,256 - nep_auto - INFO -   复制 NEP 模型: /home/gwins/code_space/nep_maker/test_nep_auto/work/../input/nep.txt -> /home/gwins/code_space/nep_maker/test_nep_auto/work/iter_0/nep.txt
+2025-12-25 15:40:47,262 - nep_auto - INFO -   复制训练数据: /home/gwins/code_space/nep_maker/test_nep_auto/work/../input/train.xyz -> /home/gwins/code_space/nep_maker/test_nep_auto/work/iter_0/train.xyz
+2025-12-25 15:40:47,336 - nep_auto - INFO -   训练集包含 200 个结构
+2025-12-25 15:40:47,336 - nep_auto - INFO - 
+步骤 3: 生成活跃集（MaxVol 选择）
+2025-12-25 15:40:47,357 - nep_auto - ERROR -   活跃集生成失败: 'Ge'
+2025-12-25 15:40:47,357 - nep_auto - ERROR - 初始化失败: 'Ge'

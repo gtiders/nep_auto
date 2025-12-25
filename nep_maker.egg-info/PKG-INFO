@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: nep-maker
+Version: 0.1.0
+Summary: Add your description here
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: ase>=3.26.0
+Requires-Dist: numpy>=2.4.0
+Requires-Dist: pynep
+Requires-Dist: pyyaml>=6.0.3
+Requires-Dist: scipy>=1.11.0
+Requires-Dist: tqdm>=4.67.1
