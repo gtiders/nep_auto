@@ -21,6 +21,7 @@ class GlobalConfig:
     max_structures_per_iteration: int
     log_file: Path
     initial_nep_model: Path
+    initial_nep_restart: Path
     initial_train_data: Path
     submit_command: str
     check_interval: int
@@ -160,6 +161,9 @@ def load_config(config_file: str) -> Config:
     initial_nep_model = _resolve_path(
         global_raw.get("initial_nep_model", "nep.txt"), work_dir
     )
+    initial_nep_restart = _resolve_path(
+        global_raw.get("initial_nep_restart", "nep.restart"), work_dir
+    )
     initial_train_data = _resolve_path(
         global_raw.get("initial_train_data", "train.xyz"), work_dir
     )
@@ -167,6 +171,8 @@ def load_config(config_file: str) -> Config:
     # 验证初始文件是否存在
     if not initial_nep_model.exists():
         raise FileNotFoundError(f"初始 NEP 模型文件不存在: {initial_nep_model}")
+    if not initial_nep_restart.exists():
+        raise FileNotFoundError(f"初始 NEP restart 文件不存在: {initial_nep_restart}")
     if not initial_train_data.exists():
         raise FileNotFoundError(f"初始训练数据文件不存在: {initial_train_data}")
 
@@ -176,6 +182,7 @@ def load_config(config_file: str) -> Config:
         max_structures_per_iteration=global_raw.get("max_structures_per_iteration", 50),
         log_file=log_file,
         initial_nep_model=initial_nep_model,
+        initial_nep_restart=initial_nep_restart,
         initial_train_data=initial_train_data,
         submit_command=global_raw.get("submit_command", "qsub job.sh"),
         check_interval=global_raw.get("check_interval", 30),
@@ -283,6 +290,7 @@ def print_config_summary(config: Config) -> None:
     print(f"  每轮最大结构数: {config.global_config.max_structures_per_iteration}")
     print(f"  日志文件: {config.global_config.log_file}")
     print(f"  初始 NEP 模型: {config.global_config.initial_nep_model}")
+    print(f"  初始 NEP restart: {config.global_config.initial_nep_restart}")
     print(f"  初始训练数据: {config.global_config.initial_train_data}")
     print(f"  任务提交命令: {config.global_config.submit_command}")
 

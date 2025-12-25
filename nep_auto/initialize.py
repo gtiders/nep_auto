@@ -109,6 +109,13 @@ def initialize_workspace(config: Config, logger: logging.Logger) -> None:
         f"  复制 NEP 模型: {config.global_config.initial_nep_model} -> {nep_dst}"
     )
 
+    # 复制 nep.restart
+    nep_restart_dst = iter0_dir / "nep.restart"
+    shutil.copy2(config.global_config.initial_nep_restart, nep_restart_dst)
+    logger.info(
+        f"  复制 NEP restart: {config.global_config.initial_nep_restart} -> {nep_restart_dst}"
+    )
+
     # 复制 train.xyz
     train_dst = iter0_dir / "train.xyz"
     shutil.copy2(config.global_config.initial_train_data, train_dst)

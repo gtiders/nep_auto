@@ -24,6 +24,10 @@ global:
   # 初始 NEP 模型文件（必须提供，相对于 work_dir）
   initial_nep_model: "nep.txt"
   
+  # 初始 NEP restart 文件（必须提供，相对于 work_dir）
+  # 用于继续训练，每次训练都会从上一轮的 nep.restart 开始
+  initial_nep_restart: "nep.restart"
+  
   # 初始训练数据（必须提供，相对于 work_dir）
   # 注意：必须包含能量、力和应力信息
   initial_train_data: "train.xyz"

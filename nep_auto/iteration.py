@@ -496,6 +496,48 @@ class IterationManager:
         train_file = iter_dir / "train.xyz"
         shutil.copy2(train_file, nep_dir / "train.xyz")
 
+        # 复制 nep.txt 和 nep.restart（用于继续训练）
+        # iter_1: 从用户提供的初始文件
+        # iter_2+: 从上一轮的训练结果
+        if iter_num == 1:
+            # 第一轮：从配置文件获取初始文件
+            nep_src = Path(self.config.global_config.initial_nep_model)
+            restart_src = Path(self.config.global_config.initial_nep_restart)
+
+            if nep_src.exists():
+                shutil.copy2(nep_src, nep_dir / "nep.txt")
+                self.logger.info("  复制初始 nep.txt")
+            else:
+                self.logger.error(f"  初始 nep.txt 不存在: {nep_src}")
+                return False
+
+            if restart_src.exists():
+                shutil.copy2(restart_src, nep_dir / "nep.restart")
+                self.logger.info("  复制初始 nep.restart")
+            else:
+                self.logger.error(f"  初始 nep.restart 不存在: {restart_src}")
+                return False
+
+        else:
+            # 后续轮次：从上一轮复制
+            prev_iter_dir = self.work_dir / f"iter_{iter_num - 1}"
+
+            nep_src = prev_iter_dir / "nep.txt"
+            if nep_src.exists():
+                shutil.copy2(nep_src, nep_dir / "nep.txt")
+                self.logger.info("  复制上一轮的 nep.txt")
+            else:
+                self.logger.error(f"  上一轮的 nep.txt 不存在: {nep_src}")
+                return False
+
+            restart_src = prev_iter_dir / "nep.restart"
+            if restart_src.exists():
+                shutil.copy2(restart_src, nep_dir / "nep.restart")
+                self.logger.info("  复制上一轮的 nep.restart")
+            else:
+                self.logger.warning(f"  上一轮的 nep.restart 不存在: {restart_src}")
+                # nep.restart 不存在不算错误，可能是第一次训练
+
         # 写入 nep.in
         with open(nep_dir / "nep.in", "w") as f:
             f.write(self.config.nep.input_content)
@@ -516,15 +558,25 @@ class IterationManager:
         ):
             return False
 
-        # 复制 nep.txt 到迭代目录
+        # 复制训练结果到迭代目录
         nep_txt = nep_dir / "nep.txt"
+        nep_restart = nep_dir / "nep.restart"
+
         if nep_txt.exists():
             shutil.copy2(nep_txt, iter_dir / "nep.txt")
-            self.logger.info("NEP 训练完成")
-            return True
+            self.logger.info("  复制训练后的 nep.txt")
         else:
             self.logger.error("NEP 训练失败：未生成 nep.txt")
             return False
+
+        if nep_restart.exists():
+            shutil.copy2(nep_restart, iter_dir / "nep.restart")
+            self.logger.info("  复制训练后的 nep.restart")
+        else:
+            self.logger.warning("未生成 nep.restart（可能训练未收敛或不需要）")
+
+        self.logger.info("NEP 训练完成")
+        return True
 
     def update_active_set(self, iter_num: int) -> bool:
         """
@@ -598,6 +650,12 @@ class IterationManager:
         shutil.copy2(curr_iter_dir / "train.xyz", next_iter_dir / "train.xyz")
         shutil.copy2(curr_iter_dir / "nep.txt", next_iter_dir / "nep.txt")
         shutil.copy2(curr_iter_dir / "active_set.asi", next_iter_dir / "active_set.asi")
+
+        # 复制 nep.restart（如果存在）
+        nep_restart = curr_iter_dir / "nep.restart"
+        if nep_restart.exists():
+            shutil.copy2(nep_restart, next_iter_dir / "nep.restart")
+            self.logger.info("  复制 nep.restart 到下一轮")
 
         # 创建 GPUMD 目录
         next_gpumd_dir = next_iter_dir / "gpumd"
