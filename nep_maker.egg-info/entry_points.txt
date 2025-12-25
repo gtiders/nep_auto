@@ -1,4 +1,0 @@
-[console_scripts]
-nep-auto-config = nep_auto.config:main
-nep-auto-init = nep_auto.initialize:main
-nep-auto-main = nep_auto.main:main
