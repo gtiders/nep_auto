@@ -163,6 +163,60 @@ class IterationManager:
             self.logger.info("GPUMD 探索已完成，跳过此步骤")
             return True
 
+        # 如果GPUMD目录不存在，尝试准备它
+        if not gpumd_dir.exists():
+            self.logger.info("GPUMD 目录不存在，准备创建...")
+
+            # 检查上一轮是否存在
+            if iter_num > 0:
+                prev_iter_dir = self.work_dir / f"iter_{iter_num - 1}"
+                if not prev_iter_dir.exists():
+                    self.logger.error(f"上一轮目录不存在: {prev_iter_dir}")
+                    self.logger.error("请确保从 iter_0 开始或使用 --start-iter 0")
+                    return False
+
+                # 复制必要文件
+                gpumd_dir.mkdir(parents=True, exist_ok=True)
+
+                # 复制 nep.txt 和 active_set.asi
+                for filename in ["nep.txt", "active_set.asi", "train.xyz"]:
+                    src = prev_iter_dir / filename
+                    if src.exists():
+                        shutil.copy2(src, iter_dir / filename)
+                        self.logger.info(f"  复制: {filename}")
+                    else:
+                        self.logger.error(f"  文件不存在: {src}")
+                        return False
+
+                # 为每个条件创建目录
+                for cond in self.config.gpumd.conditions:
+                    cond_dir = gpumd_dir / cond.id
+                    cond_dir.mkdir(parents=True, exist_ok=True)
+                    self.logger.info(f"  创建条件目录: {cond.id}")
+
+                    # 复制结构文件
+                    structure_dst = cond_dir / "model.xyz"
+                    shutil.copy2(cond.structure_file, structure_dst)
+
+                    # 复制 NEP 和活跃集
+                    shutil.copy2(iter_dir / "nep.txt", cond_dir / "nep.txt")
+                    shutil.copy2(
+                        iter_dir / "active_set.asi", cond_dir / "active_set.asi"
+                    )
+
+                    # 写入 run.in
+                    with open(cond_dir / "run.in", "w") as f:
+                        f.write(cond.run_in_content)
+
+                    # 写入作业脚本
+                    with open(cond_dir / "job.sh", "w") as f:
+                        f.write(self.config.gpumd.job_script)
+
+                self.logger.info("GPUMD 目录准备完成")
+            else:
+                self.logger.error("iter_0 的 GPUMD 目录应该由初始化创建")
+                return False
+
         # 收集所有条件目录
         job_dirs = []
         for cond in self.config.gpumd.conditions:
