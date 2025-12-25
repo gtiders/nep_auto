@@ -15,14 +15,36 @@ from .initialize import setup_logger, initialize_workspace
 from .iteration import IterationManager
 
 
-def main(config_file: str, start_iter: int = 0) -> None:
+def main() -> None:
     """
     主函数：运行完整的主动学习流程
-
-    参数:
-        config_file: 配置文件路径
-        start_iter: 起始迭代编号（0=从初始化开始，>0=从指定迭代继续）
     """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="NEP 主动学习框架",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""示例:
+  # 从头开始运行
+  nep-auto-main config.yaml
+
+  # 从指定迭代继续运行
+  nep-auto-main config.yaml --start-iter 5
+
+  # 仅初始化
+  nep-auto-init config.yaml
+        """,
+    )
+    parser.add_argument("config", type=str, help="配置文件路径")
+    parser.add_argument("--start-iter", type=int, default=0, help="起始迭代编号")
+    args = parser.parse_args()
+
+    config_file = args.config
+    start_iter = args.start_iter
+
+    if not Path(config_file).exists():
+        print(f"错误: 配置文件不存在: {config_file}")
+        sys.exit(1)
     # 加载配置
     print("=" * 80)
     print("NEP 主动学习框架")
@@ -101,43 +123,4 @@ def main(config_file: str, start_iter: int = 0) -> None:
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="NEP 主动学习框架",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-  # 从头开始运行
-  python -m nep_auto.main config.yaml
-
-  # 从指定迭代继续运行（比如中断后恢复）
-  python -m nep_auto.main config.yaml --start-iter 5
-
-  # 仅初始化（不运行迭代）
-  python -m nep_auto.initialize config.yaml
-        """,
-    )
-
-    parser.add_argument(
-        "config",
-        type=str,
-        help="配置文件路径（YAML 格式）",
-    )
-
-    parser.add_argument(
-        "--start-iter",
-        type=int,
-        default=0,
-        help="起始迭代编号（0=从初始化开始，>0=从指定迭代继续，默认: 0）",
-    )
-
-    args = parser.parse_args()
-
-    # 检查配置文件是否存在
-    if not Path(args.config).exists():
-        print(f"错误: 配置文件不存在: {args.config}")
-        sys.exit(1)
-
-    # 运行主程序
-    main(args.config, args.start_iter)
+    main()

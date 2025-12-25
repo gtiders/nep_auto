@@ -280,9 +280,9 @@ def compute_descriptor_projection(
     # Parse element list from NEP file
     with open(nep_file) as f:
         first_line = f.readline()
-        elements = first_line.split()[
-            2:-1
-        ]  # Format: nep4 N_types elem1 elem2 ... n_max
+        parts = first_line.split()
+        n_types = int(parts[1])
+        elements = parts[2 : 2 + n_types]  # Format: nep4 N_types elem1 elem2 ... elemN
     print(f"Elements in NEP potential: {elements}")
 
     # Initialize storage
