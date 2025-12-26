@@ -43,6 +43,7 @@ class NepConfig:
     """NEP 配置"""
 
     input_content: str
+    first_input_content: str
     job_script: str
     timeout: int
     prune_train_set: bool
@@ -218,6 +219,7 @@ def load_config(config_file: str) -> Config:
     nep_raw = raw_config.get("nep", {})
     nep_config = NepConfig(
         input_content=nep_raw.get("input_content", ""),
+        first_input_content=nep_raw.get("first_input_content", ""),
         job_script=nep_raw.get("job_script", ""),
         timeout=nep_raw.get("timeout", 259200),
         prune_train_set=nep_raw.get("prune_train_set", True),
