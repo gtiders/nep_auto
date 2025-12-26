@@ -12,10 +12,13 @@ global:
   work_dir: "./work"
   
   # 最大迭代次数
+  # 注意：达到此次数后会自动停止，并检查是否收敛
+  # 收敛判断：所有结构的 gamma 值 ≤ gamma_high (在 gpumd.check_interval 中配置)
+  # 如果达到上限但未收敛，程序会给出警告和建议
   max_iterations: 100
   
   # 每轮最多标注的结构数量
-  # 如果 MaxVol 选中的结构超过此数量，会随机丢弃多余的
+  # 如果 MaxVol 选中的结构超过此数量，会使用 FPS 二次筛选
   max_structures_per_iteration: 50
   
   # 日志文件（相对于 work_dir）

@@ -126,6 +126,27 @@ def main() -> None:
         # 达到最大迭代次数
         logger.info("\n" + "=" * 80)
         logger.info(f"达到最大迭代次数 ({max_iterations})")
+
+        # 检查最后一轮的收敛状态
+        final_iter_dir = config.global_config.work_dir / f"iter_{max_iterations}"
+        large_gamma_file = final_iter_dir / "large_gamma.xyz"
+
+        if large_gamma_file.exists():
+            from .iteration import read_trajectory
+
+            large_gamma_structs = read_trajectory(str(large_gamma_file))
+
+            if len(large_gamma_structs) == 0:
+                logger.info("✅ 模型已收敛：所有结构 gamma ≤ 收敛阈值")
+                logger.info(f"   最终 NEP 模型: {final_iter_dir / 'nep.txt'}")
+            else:
+                logger.warning("⚠️  模型未完全收敛")
+                logger.warning(f"   仍有 {len(large_gamma_structs)} 个高 gamma 结构")
+                logger.warning("   建议解决方案：")
+                logger.warning("   1. 增加 max_iterations 继续训练")
+                logger.warning("   2. 或调整 gamma_high 阈值降低选择标准")
+                logger.warning("   3. 或检查是否需要扩大探索空间")
+
         logger.info("=" * 80)
 
     logger.info("\n主动学习流程完成！")
