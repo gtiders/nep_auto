@@ -464,24 +464,59 @@ class IterationManager:
         self.logger.info("\n收集 DFT 计算结果...")
         train_file = iter_dir / "train.xyz"
         new_structures = []
+        failed_tasks = []  # 记录失败的任务
 
-        for job_dir in job_dirs:
+        for i, job_dir in enumerate(job_dirs):
             outcar_file = job_dir / "OUTCAR"
-            if outcar_file.exists():
-                try:
-                    from ase.io import read as ase_read
 
-                    structure = ase_read(str(outcar_file), format="vasp-out")
-                    new_structures.append(structure)
-                except Exception as e:
-                    self.logger.warning(f"  读取 {outcar_file} 失败: {e}")
+            if not outcar_file.exists():
+                self.logger.warning(f"  任务 {i}: OUTCAR 文件不存在: {job_dir.name}")
+                failed_tasks.append((i, job_dir.name, "OUTCAR不存在"))
+                continue
+
+            try:
+                from ase.io import read as ase_read
+
+                structure = ase_read(str(outcar_file), format="vasp-out")
+
+                # 验证结构是否包含必要的信息
+                if not hasattr(structure, "get_potential_energy"):
+                    raise ValueError("结构缺少能量信息")
+
+                # 尝试获取能量和力，确保数据完整
+                _ = structure.get_potential_energy()
+                forces = structure.get_forces()
+
+                if forces is None or len(forces) == 0:
+                    raise ValueError("结构缺少力信息")
+
+                new_structures.append(structure)
+
+            except Exception as e:
+                self.logger.warning(f"  任务 {i}: 读取 {outcar_file.name} 失败: {e}")
+                failed_tasks.append((i, job_dir.name, str(e)))
+
+        # 统计结果
+        total_tasks = len(job_dirs)
+        success_count = len(new_structures)
+        failed_count = len(failed_tasks)
+
+        self.logger.info(f"\nDFT 计算统计:")
+        self.logger.info(f"  总任务数: {total_tasks}")
+        self.logger.info(f"  成功: {success_count}")
+        self.logger.info(f"  失败: {failed_count}")
+
+        if failed_tasks:
+            self.logger.info("\n失败任务详情:")
+            for task_id, task_name, reason in failed_tasks:
+                self.logger.info(f"  - {task_name}: {reason}")
 
         if new_structures:
             # 追加到训练集
             existing = read_trajectory(str(train_file))
             all_structures = existing + new_structures
             write_trajectory(all_structures, str(train_file))
-            self.logger.info(f"成功标注 {len(new_structures)} 个结构")
+            self.logger.info(f"\n成功标注 {len(new_structures)} 个结构")
             self.logger.info(f"训练集更新为 {len(all_structures)} 个结构")
             return True
         else:
