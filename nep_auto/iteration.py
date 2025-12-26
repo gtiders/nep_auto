@@ -543,7 +543,94 @@ class IterationManager:
 
         # 复制训练数据
         train_file = iter_dir / "train.xyz"
-        shutil.copy2(train_file, nep_dir / "train.xyz")
+        train_xyz_dst = nep_dir / "train.xyz"
+
+        # 训练集修剪（可选）
+        if self.config.nep.prune_train_set:
+            self.logger.info("\n检查训练集大小...")
+
+            # 读取 NEP 模型以获取描述符维度
+            # 注意：这里需要先有 nep.txt，所以在 iter_1 时使用初始模型
+            if iter_num == 1:
+                nep_for_check = Path(self.config.global_config.initial_nep_model)
+            else:
+                prev_iter_dir = self.work_dir / f"iter_{iter_num - 1}"
+                nep_for_check = prev_iter_dir / "nep.txt"
+
+            if not nep_for_check.exists():
+                self.logger.error(
+                    f"  NEP 模型不存在，无法计算描述符维度: {nep_for_check}"
+                )
+                return False
+
+            # 从 NEP 文件读取描述符维度
+            try:
+                from .maxvol import (
+                    prune_training_set_maxvol,
+                    read_trajectory,
+                    write_trajectory,
+                )
+
+                # 读取 nep.txt 获取描述符维度
+                with open(nep_for_check) as f:
+                    first_line = f.readline()
+                    parts = first_line.split()
+                    # 第三个参数通常是 basis_size，第四个是 l_max
+                    # 描述符维度粗略估计：从 NEP 计算器获取
+                    from pynep.calculate import NEP
+
+                    temp_calc = NEP(str(nep_for_check))
+                    # 计算一个小结构的描述符来获取维度
+                    test_structures = read_trajectory(str(train_file))
+                    if len(test_structures) > 0:
+                        test_desc = temp_calc.get_property(
+                            "descriptor", test_structures[0]
+                        )
+                        descriptor_dim = test_desc.shape[1]
+                        self.logger.info(f"  描述符维度: {descriptor_dim}")
+
+                        # 计算最大允许的结构数
+                        max_structures = int(
+                            descriptor_dim * self.config.nep.max_structures_factor
+                        )
+                        self.logger.info(
+                            f"  最大结构数: {max_structures} "
+                            f"(维度 {descriptor_dim} × {self.config.nep.max_structures_factor})"
+                        )
+
+                        # 读取训练集
+                        train_structures = read_trajectory(str(train_file))
+                        self.logger.info(f"  当前训练集大小: {len(train_structures)}")
+
+                        if len(train_structures) > max_structures:
+                            # 执行修剪
+                            pruned_structures = prune_training_set_maxvol(
+                                structures=train_structures,
+                                nep_file=str(nep_for_check),
+                                max_structures=max_structures,
+                                show_progress=False,
+                            )
+
+                            # 保存修剪后的训练集
+                            write_trajectory(pruned_structures, str(train_xyz_dst))
+                            self.logger.info(
+                                f"  ✓ 训练集已修剪: {len(train_structures)} → {len(pruned_structures)}"
+                            )
+                        else:
+                            # 不需要修剪，直接复制
+                            shutil.copy2(train_file, train_xyz_dst)
+                            self.logger.info(f"  训练集大小适中，无需修剪")
+                    else:
+                        # 训练集为空
+                        shutil.copy2(train_file, train_xyz_dst)
+
+            except Exception as e:
+                self.logger.warning(f"  训练集修剪失败: {e}")
+                self.logger.warning(f"  回退到直接复制模式")
+                shutil.copy2(train_file, train_xyz_dst)
+        else:
+            # 未启用修剪，直接复制
+            shutil.copy2(train_file, train_xyz_dst)
 
         # 复制 nep.txt 和 nep.restart（用于继续训练）
         # iter_1: 从用户提供的初始文件

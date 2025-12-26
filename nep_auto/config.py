@@ -45,6 +45,8 @@ class NepConfig:
     input_content: str
     job_script: str
     timeout: int
+    prune_train_set: bool
+    max_structures_factor: float
 
 
 @dataclass
@@ -218,6 +220,8 @@ def load_config(config_file: str) -> Config:
         input_content=nep_raw.get("input_content", ""),
         job_script=nep_raw.get("job_script", ""),
         timeout=nep_raw.get("timeout", 259200),
+        prune_train_set=nep_raw.get("prune_train_set", True),
+        max_structures_factor=nep_raw.get("max_structures_factor", 1.0),
     )
 
     # 解析 GPUMD 配置
