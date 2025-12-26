@@ -132,6 +132,62 @@ def initialize_workspace(config: Config, logger: logging.Logger) -> None:
     # =========================================================================
     logger.info("\n步骤 3: 生成活跃集（MaxVol 选择）")
 
+    # 预检查：确保每个元素类型都有足够的原子
+    logger.info("  检查训练数据是否足够...")
+    from collections import Counter
+
+    # 统计每种元素的原子数
+    all_symbols = []
+    for structure in train_structures:
+        all_symbols.extend(structure.get_chemical_symbols())
+
+    element_counts = Counter(all_symbols)
+    logger.info(f"  训练集中的元素统计:")
+    for elem, count in sorted(element_counts.items()):
+        logger.info(f"    {elem}: {count} 个原子")
+
+    # 从 NEP 文件读取描述符维度和元素列表
+    with open(nep_dst) as f:
+        first_line = f.readline()
+        parts = first_line.split()
+        n_types = int(parts[1])
+        nep_elements = parts[2 : 2 + n_types]
+
+    # 检查每个元素是否有足够的原子
+    # 注意：这里只是粗略估计，实际需要的数量取决于描述符维度
+    logger.info(f"\n  NEP 模型中的元素: {', '.join(nep_elements)}")
+
+    missing_elements = []
+    insufficient_elements = []
+
+    for elem in nep_elements:
+        if elem not in element_counts:
+            missing_elements.append(elem)
+        elif element_counts[elem] < 10:  # 粗略检查，至少 10 个原子
+            insufficient_elements.append((elem, element_counts[elem]))
+
+    if missing_elements:
+        error_msg = (
+            f"\n{'=' * 80}\n"
+            f"错误：训练数据中缺少某些元素\n"
+            f"{'=' * 80}\n"
+            f"缺少的元素: {', '.join(missing_elements)}\n"
+            f"NEP 模型需要: {', '.join(nep_elements)}\n"
+            f"训练集中有: {', '.join(element_counts.keys())}\n\n"
+            f"解决方案：\n"
+            f"  1. 在训练数据中添加包含这些元素的结构\n"
+            f"  2. 或修改 NEP 模型以匹配当前的训练数据\n"
+            f"{'=' * 80}\n"
+        )
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    if insufficient_elements:
+        logger.warning("  警告：以下元素的原子数量可能不足：")
+        for elem, count in insufficient_elements:
+            logger.warning(f"    {elem}: 只有 {count} 个原子 (建议至少 10 个)")
+        logger.warning("  如果 MaxVol 失败，需要添加更多的训练结构")
+
     try:
         active_set_result, selected_structures = select_active_set(
             trajectory=train_structures,

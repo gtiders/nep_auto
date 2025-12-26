@@ -320,12 +320,30 @@ def compute_descriptor_projection(
             )
             print(f"  {elem}: {projection_dict_arr[elem].shape}")
 
-            # Verify the matrix is tall
+            # Verify the matrix is tall (overdetermined system)
+            # MaxVol 算法是按元素类型分别进行的，所以每个元素都需要满足超定条件
             n, d = projection_dict_arr[elem].shape
-            if n < d:
-                raise ValueError(
-                    f"元素 {elem} 的环境数量不足: 需要至少 {d} 个，当前只有 {n} 个"
+            if n <= d:
+                error_msg = (
+                    f"\n{'=' * 80}\n"
+                    f"错误：元素 '{elem}' 的训练数据不足以运行 MaxVol 算法\n"
+                    f"{'=' * 80}\n"
+                    f"当前状态:\n"
+                    f"  元素类型: {elem}\n"
+                    f"  该元素的原子环境数量: {n}\n"
+                    f"  NEP 描述符维度: {d}\n"
+                    f"  需要满足: 原子数 > 描述符维度\n\n"
+                    f"MaxVol 算法要求 (按元素类型):\n"
+                    f"  - 每种元素的原子数量必须大于描述符维度\n"
+                    f"  - 不同元素类型分别计算活跃集\n\n"
+                    f"建议解决方案:\n"
+                    f"  1. 增加训练集中包含元素 '{elem}' 的结构数量\n"
+                    f"  2. 至少需要 {d + 1} 个 '{elem}' 原子环境\n"
+                    f"  3. 建议提供至少 {d * 2} 个 '{elem}' 原子以获得更好的效果\n"
+                    f"  4. 检查所有元素类型 ({', '.join(elements)}) 是否都有足够的原子\n"
+                    f"{'=' * 80}\n"
                 )
+                raise ValueError(error_msg)
 
     return DescriptorProjectionResult(
         projection_dict=projection_dict_arr,
@@ -701,6 +719,7 @@ def write_trajectory(
 
     ase_write(str(file_path), trajectory)
 
+
 # =============================================================================
 # FPS (最远点采样) 筛选
 # =============================================================================
@@ -715,81 +734,87 @@ def apply_fps_filter(
 ) -> list[Atoms]:
     """
     使用 FPS (最远点采样) 对结构进行二次筛选。
-    
+
     该函数用于在 MaxVol 选择后进一步确保结构的多样性。
     如果 FPS 选出的结构数量不足 max_count，会自动降低 min_distance。
     如果超过 max_count，会随机丢弃多余的结构。
-    
+
     参数:
         structures: 待筛选的结构列表（通常是 MaxVol 选出的结构）
         nep_file: NEP 势函数文件路径
         max_count: 目标结构数量（max_structures_per_iteration）
         initial_min_distance: 初始最小距离阈值
         show_progress: 是否显示进度
-    
+
     返回:
         筛选后的结构列表（数量 <= max_count）
     """
     if FarthestPointSample is None:
         raise ImportError("请先安装 PyNEP: pip install pynep")
-    
+
     if len(structures) == 0:
         return structures
-    
+
     if len(structures) <= max_count:
         print(f"结构数量 ({len(structures)}) <= 上限 ({max_count})，无需 FPS 筛选")
         return structures
-    
+
     # 计算描述符（结构级别平均）
     print(f"\n执行 FPS 二次筛选: {len(structures)} → 目标 {max_count}")
     calc = NEP(str(nep_file))
-    
+
     descriptors = []
     iterator = tqdm(structures, desc="计算描述符") if show_progress else structures
-    
+
     for structure in iterator:
         desc = calc.get_property("descriptor", structure)
         # 对每个结构求平均描述符
         descriptors.append(np.mean(desc, axis=0))
-    
+
     descriptors_array = np.array(descriptors)
     print(f"描述符形状: {descriptors_array.shape}")
-    
+
     # 自动调整 min_distance 以满足 max_count 约束
     min_distance = initial_min_distance
     max_iterations = 10
-    
+
     for attempt in range(max_iterations):
         sampler = FarthestPointSample(min_distance=min_distance)
         selected_indices = sampler.select(descriptors_array, [])
         n_selected = len(selected_indices)
-        
-        print(f"  尝试 {attempt + 1}: min_distance={min_distance:.6f}, "
-              f"选中 {n_selected} 个结构")
-        
+
+        print(
+            f"  尝试 {attempt + 1}: min_distance={min_distance:.6f}, "
+            f"选中 {n_selected} 个结构"
+        )
+
         if n_selected >= max_count:
             # 选出的数量足够或过多
             if n_selected > max_count:
                 # 随机丢弃多余的结构
-                print(f"  FPS 选出 {n_selected} > {max_count}，随机丢弃 "
-                      f"{n_selected - max_count} 个")
+                print(
+                    f"  FPS 选出 {n_selected} > {max_count}，随机丢弃 "
+                    f"{n_selected - max_count} 个"
+                )
                 np.random.shuffle(selected_indices)
                 selected_indices = selected_indices[:max_count]
-            
+
             selected_structures = [structures[i] for i in selected_indices]
             print(f"✓ FPS 筛选完成: {len(structures)} → {len(selected_structures)}\n")
             return selected_structures
-        
+
         # 数量不足，降低 min_distance
         min_distance *= 0.7  # 每次减少30%
-        
+
         if min_distance < 1e-6:
             # min_distance 太小了，直接返回所有选中的
-            print(f"  警告: min_distance 已降至 {min_distance:.2e}，"
-                  f"仅选出 {n_selected} 个结构")
+            print(
+                f"  警告: min_distance 已降至 {min_distance:.2e}，"
+                f"仅选出 {n_selected} 个结构"
+            )
             selected_structures = [structures[i] for i in selected_indices]
             return selected_structures
-    
+
     # 达到最大尝试次数，返回当前结果
     print(f"  警告: 达到最大尝试次数，FPS 仅选出 {len(selected_indices)} 个结构")
     selected_structures = [structures[i] for i in selected_indices]
