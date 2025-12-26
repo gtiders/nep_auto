@@ -176,3 +176,8 @@ selection:
   # MaxVol 算法参数
   gamma_tol: 1.001           # 收敛阈值（算法何时停止迭代）
   batch_size: 10000          # 批处理大小（大数据集分批处理）
+  
+  # FPS (最远点采样) 参数
+  # 在 MaxVol 选择后，使用 FPS 进行二次筛选以确保结构多样性
+  fps_min_distance: 0.01     # 初始最小距离阈值
+  fps_enabled: true          # 是否启用 FPS 二次筛选

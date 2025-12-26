@@ -377,9 +377,23 @@ class IterationManager:
 
         self.logger.info(f"MaxVol 选中 {len(selected)} 个结构")
 
-        # 限制数量
+        # FPS 二次筛选（可选）
         max_structures = self.config.global_config.max_structures_per_iteration
-        if len(selected) > max_structures:
+
+        if self.config.selection.fps_enabled and len(selected) > max_structures:
+            self.logger.info(f"\n启用 FPS 二次筛选...")
+            from .maxvol import apply_fps_filter
+
+            selected = apply_fps_filter(
+                structures=selected,
+                nep_file=str(nep_file),
+                max_count=max_structures,
+                initial_min_distance=self.config.selection.fps_min_distance,
+                show_progress=False,  # 不显示进度条，避免日志混乱
+            )
+            self.logger.info(f"FPS 筛选后: {len(selected)} 个结构")
+        elif len(selected) > max_structures:
+            # 传统方式：随机丢弃
             self.logger.info(f"限制为 {max_structures} 个结构（随机选择）")
             random.seed(42)  # 保证可重复性
             random.shuffle(selected)

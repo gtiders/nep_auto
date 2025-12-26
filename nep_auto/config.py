@@ -71,6 +71,8 @@ class SelectionConfig:
 
     gamma_tol: float
     batch_size: int
+    fps_min_distance: float
+    fps_enabled: bool
 
 
 @dataclass
@@ -262,6 +264,8 @@ def load_config(config_file: str) -> Config:
     selection_config = SelectionConfig(
         gamma_tol=selection_raw.get("gamma_tol", 1.001),
         batch_size=selection_raw.get("batch_size", 10000),
+        fps_min_distance=selection_raw.get("fps_min_distance", 0.01),
+        fps_enabled=selection_raw.get("fps_enabled", True),
     )
 
     return Config(
