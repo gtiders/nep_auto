@@ -829,76 +829,78 @@ def prune_training_set_maxvol(
 ) -> list[Atoms]:
     """
     使用 MaxVol 算法修剪训练集。
-    
+
     通过计算结构级别的平均描述符，使用 MaxVol 选择最有代表性的结构，
     确保训练集大小不超过描述符维度，提高训练效率。
-    
+
     参数:
         structures: 原始训练集结构列表
         nep_file: NEP 势函数文件路径
         max_structures: 最大保留结构数
         show_progress: 是否显示进度
-    
+
     返回:
         修剪后的结构列表（数量 <= max_structures）
     """
     if NEP is None:
         raise ImportError("请先安装 PyNEP: pip install pynep")
-    
+
     if len(structures) <= max_structures:
         print(f"训练集大小 ({len(structures)}) <= 上限 ({max_structures})，无需修剪")
         return structures
-    
+
     print(f"\n执行训练集修剪 (MaxVol): {len(structures)} → {max_structures}")
-    
+
     # 计算结构级别的平均描述符
     calc = NEP(str(nep_file))
     descriptors = []
-    
+
     iterator = tqdm(structures, desc="计算描述符") if show_progress else structures
-    
+
     for structure in iterator:
         desc = calc.get_property("descriptor", structure)
         # 对每个结构求平均描述符
         descriptors.append(np.mean(desc, axis=0))
-    
+
     descriptors_array = np.array(descriptors)  # shape: (n_structures, descriptor_dim)
     n, d = descriptors_array.shape
-    
+
     print(f"描述符矩阵形状: {descriptors_array.shape}")
     print(f"  结构数: {n}")
     print(f"  描述符维度: {d}")
-    
+
     # 检查是否满足 MaxVol 要求
     if n <= d:
         print(f"警告: 结构数 ({n}) <= 描述符维度 ({d})，无法使用 MaxVol")
-        print(f"      返回所有结构")
+        print("      返回所有结构")
         return structures
-    
+
     # 使用 MaxVol 算法选择最有代表性的结构
     # 需要选择 max_structures 个结构
     target_count = min(max_structures, d)  # 不能超过描述符维度
-    
+
     print(f"\n使用 MaxVol 选择 {target_count} 个最有代表性的结构...")
-    
+
     try:
         # 使用内部的 MaxVol 核心算法
-        selected_indices = _maxvol_core(descriptors_array, gamma_tol=1.001, max_iter=1000)
-        
+        selected_indices = _maxvol_core(
+            descriptors_array, gamma_tol=1.001, max_iter=1000
+        )
+
         # selected_indices 长度为 d，我们需要从中选择 target_count 个
         if len(selected_indices) > target_count:
             # 随机选择 target_count 个
             np.random.shuffle(selected_indices)
             selected_indices = selected_indices[:target_count]
-        
+
         selected_structures = [structures[i] for i in selected_indices]
-        
+
         print(f"✓ 修剪完成: {len(structures)} → {len(selected_structures)} 个结构\n")
         return selected_structures
-        
+
     except Exception as e:
         print(f"警告: MaxVol 修剪失败: {e}")
-        print(f"      回退到随机采样")
+        print("      回退到随机采样")
         # 如果 MaxVol 失败，回退到随机采样
         indices = list(range(len(structures)))
         np.random.shuffle(indices)

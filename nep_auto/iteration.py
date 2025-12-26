@@ -381,7 +381,7 @@ class IterationManager:
         max_structures = self.config.global_config.max_structures_per_iteration
 
         if self.config.selection.fps_enabled and len(selected) > max_structures:
-            self.logger.info(f"\n启用 FPS 二次筛选...")
+            self.logger.info("\n启用 FPS 二次筛选...")
             from .maxvol import apply_fps_filter
 
             selected = apply_fps_filter(
@@ -501,7 +501,7 @@ class IterationManager:
         success_count = len(new_structures)
         failed_count = len(failed_tasks)
 
-        self.logger.info(f"\nDFT 计算统计:")
+        self.logger.info("\nDFT 计算统计:")
         self.logger.info(f"  总任务数: {total_tasks}")
         self.logger.info(f"  成功: {success_count}")
         self.logger.info(f"  失败: {failed_count}")
@@ -573,8 +573,7 @@ class IterationManager:
 
                 # 读取 nep.txt 获取描述符维度
                 with open(nep_for_check) as f:
-                    first_line = f.readline()
-                    parts = first_line.split()
+                    _ = f.readline()  # 只需要验证文件可读，不使用内容
                     # 第三个参数通常是 basis_size，第四个是 l_max
                     # 描述符维度粗略估计：从 NEP 计算器获取
                     from pynep.calculate import NEP
@@ -619,14 +618,14 @@ class IterationManager:
                         else:
                             # 不需要修剪，直接复制
                             shutil.copy2(train_file, train_xyz_dst)
-                            self.logger.info(f"  训练集大小适中，无需修剪")
+                            self.logger.info("  训练集大小适中，无需修剪")
                     else:
                         # 训练集为空
                         shutil.copy2(train_file, train_xyz_dst)
 
             except Exception as e:
-                self.logger.warning(f"  训练集修剪失败: {e}")
-                self.logger.warning(f"  回退到直接复制模式")
+                self.logger.warning("  训练集修剪失败: {e}")
+                self.logger.warning("  回退到直接复制模式")
                 shutil.copy2(train_file, train_xyz_dst)
         else:
             # 未启用修剪，直接复制

@@ -142,7 +142,7 @@ def initialize_workspace(config: Config, logger: logging.Logger) -> None:
         all_symbols.extend(structure.get_chemical_symbols())
 
     element_counts = Counter(all_symbols)
-    logger.info(f"  训练集中的元素统计:")
+    logger.info("  训练集中的元素统计:")
     for elem, count in sorted(element_counts.items()):
         logger.info(f"    {elem}: {count} 个原子")
 
